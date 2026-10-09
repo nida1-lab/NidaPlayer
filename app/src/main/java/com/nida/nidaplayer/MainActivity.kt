@@ -2,6 +2,7 @@ package com.nida.nidaplayer
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.Intent
 import android.content.ContentUris
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
@@ -21,6 +22,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.text.Editable
 import android.text.TextWatcher
 import android.text.InputType
@@ -116,9 +118,17 @@ class MainActivity : ComponentActivity() {
         if (granted) {
             loadLibrary()
         } else {
-            infoMessage = "音楽ファイルへのアクセスが必要です。設定から許可してください。"
+            infoMessage = "端末内の音楽一覧を読むにはアクセス許可が必要です。ファイルからの追加は引き続き利用できます。"
             renderShell()
         }
+    }
+
+    // The Android system picker supports selecting multiple MP3 files at once.
+    private val mp3Picker = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { selectedUris ->
+        if (selectedUris.isNullOrEmpty()) return@registerForActivityResult
+        importSelectedMp3s(selectedUris)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -159,6 +169,7 @@ class MainActivity : ComponentActivity() {
         })
 
         loadRecentHistory()
+        restoreImportedMp3s()
         renderShell()
         connectPlayback()
         requestLibraryPermission()
@@ -223,6 +234,99 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun openMp3Picker() {
+        try {
+            mp3Picker.launch(arrayOf("audio/mpeg"))
+        } catch (_: Exception) {
+            Toast.makeText(this, "ファイル選択画面を開けませんでした", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun importSelectedMp3s(uris: List<Uri>) {
+        val prefs = getSharedPreferences("nida_player", MODE_PRIVATE)
+        val saved = prefs.getString("imported_mp3_uris", "").orEmpty()
+            .split("\n").filter { it.isNotBlank() }.toMutableSet()
+        var added = 0
+        var failed = 0
+
+        uris.forEach { uri ->
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+                val uriText = uri.toString()
+                if (tracks.any { it.uri == uriText } || !saved.add(uriText)) return@forEach
+
+                val displayName = contentResolver.query(
+                    uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (column >= 0) cursor.getString(column) else null
+                    } else null
+                } ?: uri.lastPathSegment?.substringAfterLast('/') ?: "unknown.mp3"
+
+                tracks.add(
+                    AudioTrack(
+                        id = uriText.hashCode().toLong(),
+                        title = displayName.substringBeforeLast('.', displayName).ifBlank { "タイトル不明" },
+                        artist = "ファイルから追加",
+                        album = "追加したMP3",
+                        uri = uriText
+                    )
+                )
+                added++
+            } catch (_: Exception) {
+                failed++
+            }
+        }
+
+        prefs.edit().putString("imported_mp3_uris", saved.joinToString("\n")).apply()
+        if (activeQueue.isEmpty()) activeQueue = tracks.toList()
+        infoMessage = when {
+            added > 0 && failed == 0 -> "MP3を${added}曲追加しました"
+            added > 0 -> "MP3を${added}曲追加、${failed}件は読み込めませんでした"
+            failed > 0 -> "一部のファイルを追加できませんでした（${failed}件）"
+            else -> "選択したMP3はすでに追加されています"
+        }
+        Toast.makeText(this, infoMessage, Toast.LENGTH_LONG).show()
+        renderShell()
+    }
+
+    private fun restoreImportedMp3s() {
+        val saved = getSharedPreferences("nida_player", MODE_PRIVATE)
+            .getString("imported_mp3_uris", "").orEmpty()
+            .split("\n").filter { it.isNotBlank() }
+        saved.forEach { uriText ->
+            try {
+                val uri = Uri.parse(uriText)
+                val displayName = contentResolver.query(
+                    uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (column >= 0) cursor.getString(column) else null
+                    } else null
+                } ?: uri.lastPathSegment?.substringAfterLast('/') ?: "unknown.mp3"
+                if (tracks.none { it.uri == uriText }) {
+                    tracks.add(
+                        AudioTrack(
+                            id = uriText.hashCode().toLong(),
+                            title = displayName.substringBeforeLast('.', displayName).ifBlank { "タイトル不明" },
+                            artist = "ファイルから追加",
+                            album = "追加したMP3",
+                            uri = uriText
+                        )
+                    )
+                }
+            } catch (_: Exception) {
+                // Ignore deleted files or revoked grants.
+            }
+        }
+        if (activeQueue.isEmpty()) activeQueue = tracks.toList()
+    }
+
     private fun loadLibrary() {
         val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
         val projection = arrayOf(
@@ -260,8 +364,13 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+            val imported = tracks.filter { it.uri.startsWith("content://") &&
+                !it.uri.contains("media/external/audio/media") }
             tracks.clear()
             tracks.addAll(loaded)
+            imported.forEach { importedTrack ->
+                if (tracks.none { it.uri == importedTrack.uri }) tracks.add(importedTrack)
+            }
             if (activeQueue.isEmpty()) activeQueue = tracks.toList()
             infoMessage = if (tracks.isEmpty()) {
                 "曲が見つかりません。端末に音楽ファイルを保存してください。"
@@ -354,7 +463,10 @@ class MainActivity : ComponentActivity() {
             renderShell()
             searchInput?.requestFocus()
         })
-        bar.addView(iconButton("⟳", "ライブラリを再読み込み") {
+        bar.addView(iconButton("＋", "MP3ファイルをまとめて追加") {
+            openMp3Picker()
+        })
+        bar.addView(iconButton("⟳", "端末ライブラリを再読み込み") {
             requestLibraryPermission()
         })
         parent.addView(bar)
@@ -385,11 +497,9 @@ class MainActivity : ComponentActivity() {
         actions.addView(actionButton("▶  シャッフル再生", true) {
             playAll(tracks.toList(), shuffle = true)
         }, LinearLayout.LayoutParams(0, dp(48), 1f))
-        actions.addView(actionButton("曲を探す", false) {
-            page = Page.LIBRARY
-            libraryTab = LibraryTab.SONGS
-            renderShell()
-        }, LinearLayout.LayoutParams(dp(106), dp(48)).apply {
+        actions.addView(actionButton("＋ MP3追加", false) {
+            openMp3Picker()
+        }, LinearLayout.LayoutParams(dp(112), dp(48)).apply {
             leftMargin = dp(8)
         })
         hero.addView(actions)
