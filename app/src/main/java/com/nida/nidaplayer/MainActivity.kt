@@ -21,6 +21,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
@@ -29,7 +30,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 
-class MainActivity : android.app.Activity() {
+class MainActivity : ComponentActivity() {
     private lateinit var root: LinearLayout
     private lateinit var list: LinearLayout
     private lateinit var cover: ImageView
