@@ -391,7 +391,7 @@ class MainActivity : ComponentActivity() {
     private fun renderShell() {
         root.removeAllViews()
         artworkViews.clear()
-        artworkPreloadBudget = 24
+        artworkPreloadBudget = 8
         miniPlayButton = null
         fullPlayButton = null
         fullSeekBar = null
@@ -909,12 +909,117 @@ class MainActivity : ComponentActivity() {
         ))
         body.addView(safety, fullWidthWrap())
         addGap(body, 22)
+        renderEqualizer(body)
+        addGap(body, 22)
 
         sectionHeader(body, "次に再生", "${activeQueue.size}曲")
         renderTrackRows(body, activeQueue.ifEmpty { tracks.toList() }, activeQueue.ifEmpty { tracks.toList() })
         handler.removeCallbacks(progressRunnable)
         handler.post(progressRunnable)
         updateProgressUi()
+    }
+
+    private fun renderEqualizer(parent: LinearLayout) {
+        val prefs = getSharedPreferences("nida_player", MODE_PRIVATE)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(12))
+            background = rounded(surfaceColor, 18f)
+        }
+        val heading = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        heading.addView(makeText("イコライザ", 17f, primaryText, true),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val enabled = prefs.getBoolean("equalizer_enabled", true)
+        heading.addView(actionButton(if (enabled) "ON" else "OFF", enabled) {
+            val next = !prefs.getBoolean("equalizer_enabled", true)
+            prefs.edit().putBoolean("equalizer_enabled", next).apply()
+            PlaybackService.setEqualizerEnabled(next)
+            fullPlayerVisible = true
+            renderShell()
+        })
+        panel.addView(heading)
+        addGap(panel, 10)
+
+        val presets = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        listOf("標準" to 0, "低音" to 1, "ボーカル" to 2, "高音" to 3).forEach { (label, preset) ->
+            presets.addView(actionButton(label, false) {
+                val bandCount = PlaybackService.equalizerBandCount()
+                if (bandCount > 0) {
+                    val minMax = PlaybackService.equalizerBandLevelRange()
+                    for (band in 0 until bandCount) {
+                        val hz = PlaybackService.equalizerCenterFrequency(band) / 1000
+                        val level = when (preset) {
+                            1 -> if (hz < 250) 600 else if (hz > 4000) -150 else 0
+                            2 -> if (hz in 250..4000) 450 else -100
+                            3 -> if (hz > 2000) 550 else if (hz < 200) -100 else 0
+                            else -> 0
+                        }.coerceIn(minMax?.get(0)?.toInt() ?: -1500, minMax?.get(1)?.toInt() ?: 1500)
+                        PlaybackService.setEqualizerBandLevel(band, level.toShort())
+                        prefs.edit().putInt("equalizer_band_$band", level).apply()
+                    }
+                    prefs.edit().putBoolean("equalizer_enabled", true).apply()
+                    PlaybackService.setEqualizerEnabled(true)
+                    fullPlayerVisible = true
+                    renderShell()
+                } else {
+                    Toast.makeText(this, "曲を再生してからお試しください", Toast.LENGTH_SHORT).show()
+                }
+            }, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
+                leftMargin = dp(2)
+                rightMargin = dp(2)
+            })
+        }
+        panel.addView(presets)
+        addGap(panel, 8)
+
+        val count = PlaybackService.equalizerBandCount()
+        val range = PlaybackService.equalizerBandLevelRange()
+        if (count <= 0 || range == null || range.size < 2) {
+            panel.addView(makeText("曲を再生するとイコライザを利用できます", 12f, secondaryText))
+        } else {
+            for (band in 0 until count) {
+                val centerHz = PlaybackService.equalizerCenterFrequency(band)
+                val frequencyLabel = if (centerHz >= 1_000_000) {
+                    String.format(Locale.getDefault(), "%.1f kHz", centerHz / 1_000_000f)
+                } else {
+                    "${centerHz / 1000} Hz"
+                }
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                row.addView(makeText(frequencyLabel, 11f, secondaryText),
+                    LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.WRAP_CONTENT))
+                val minLevel = range[0].toInt()
+                val maxLevel = range[1].toInt()
+                val current = prefs.getInt("equalizer_band_$band", 0).coerceIn(minLevel, maxLevel)
+                row.addView(SeekBar(this).apply {
+                    max = maxLevel - minLevel
+                    progress = current - minLevel
+                    progressTintList = ColorStateList.valueOf(accentColor)
+                    thumbTintList = ColorStateList.valueOf(primaryText)
+                    setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                        override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                            if (fromUser) {
+                                val level = (progress + minLevel).coerceIn(minLevel, maxLevel)
+                                PlaybackService.setEqualizerBandLevel(band, level.toShort())
+                                prefs.edit().putInt("equalizer_band_$band", level).apply()
+                            }
+                        }
+                        override fun onStartTrackingTouch(seekBar: SeekBar) {}
+                        override fun onStopTrackingTouch(seekBar: SeekBar) {}
+                    })
+                }, LinearLayout.LayoutParams(0, dp(34), 1f))
+                panel.addView(row)
+            }
+        }
+        parent.addView(panel, fullWidthWrap())
     }
 
     private fun renderHorizontalTrackCards(parent: LinearLayout, items: List<AudioTrack>) {
@@ -1172,7 +1277,13 @@ class MainActivity : ComponentActivity() {
                     val raw = embeddedBytes
                     if (raw != null) {
                         decodedBitmap = try {
-                            BitmapFactory.decodeByteArray(raw, 0, raw.size)
+                            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
+                            var sample = 1
+                            while (bounds.outWidth / sample > 512 || bounds.outHeight / sample > 512) sample *= 2
+                            BitmapFactory.decodeByteArray(raw, 0, raw.size, BitmapFactory.Options().apply {
+                                inSampleSize = sample
+                            })
                         } catch (_: Exception) {
                             null
                         }
@@ -1263,22 +1374,22 @@ class MainActivity : ComponentActivity() {
         val index = (seed.hashCode().absoluteValueSafe()) % palette.size
         val first = palette[index]
         val second = palette[(index + 2) % palette.size]
-        val bitmap = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        paint.shader = LinearGradient(0f, 0f, 512f, 512f, first, second, Shader.TileMode.CLAMP)
-        canvas.drawRect(0f, 0f, 512f, 512f, paint)
+        paint.shader = LinearGradient(0f, 0f, 256f, 256f, first, second, Shader.TileMode.CLAMP)
+        canvas.drawRect(0f, 0f, 256f, 256f, paint)
         paint.shader = null
         paint.color = 0x22FFFFFF
-        canvas.drawCircle(390f, 105f, 170f, paint)
+        canvas.drawCircle(195f, 52f, 85f, paint)
         paint.color = 0x18000000
-        canvas.drawCircle(110f, 430f, 230f, paint)
+        canvas.drawCircle(55f, 215f, 115f, paint)
         paint.color = 0xFFFFFFFF.toInt()
         paint.textAlign = Paint.Align.CENTER
         paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
-        paint.textSize = 210f
+        paint.textSize = 105f
         val glyph = seed.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "N"
-        canvas.drawText(glyph, 256f, 335f, paint)
+        canvas.drawText(glyph, 128f, 168f, paint)
         artworkCache[key] = bitmap
         return bitmap
     }
