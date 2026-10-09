@@ -173,7 +173,9 @@ class MainActivity : ComponentActivity() {
                             activeTrack = item
                             activeArtwork = artworkCache[item.uri]
                             renderShell()
-                            loadEmbeddedCover(item)
+                            // Replacing the current MediaItem to publish its artwork may emit another
+                            // transition callback. The URI-keyed cache prevents redundant reload loops.
+                            if (artworkCache[item.uri] == null) loadEmbeddedCover(item)
                         }
                     }
 
