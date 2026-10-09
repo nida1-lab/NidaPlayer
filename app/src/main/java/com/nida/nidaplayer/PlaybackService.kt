@@ -20,8 +20,9 @@ class PlaybackService : MediaSessionService() {
                     .build(),
                 true
             )
-            // Do not force-mute when no headphones are connected.
-            // Android routes media audio to the phone speaker by default.
+            // Keep normal media routing enabled: Android sends audio to connected
+            // headphones, or to the built-in phone speaker when none are connected.
+            // Do not apply a headphone-detection mute here.
         }
         mediaSession = MediaSession.Builder(this, player).build()
     }
