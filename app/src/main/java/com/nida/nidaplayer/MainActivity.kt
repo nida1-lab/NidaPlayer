@@ -297,7 +297,7 @@ class MainActivity : ComponentActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(8), dp(18), dp(24))
         }
-        scroll.addView(content, ScrollView.LayoutParams(
+        scroll.addView(content, ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         ))
@@ -974,7 +974,6 @@ class MainActivity : ComponentActivity() {
             return
         }
         activeQueue = safeQueue.toList()
-        currentIndex = index
         activeTrack = track
         activeArtwork = artworkCache[track.uri]
         rememberRecent(track)
