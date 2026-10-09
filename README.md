@@ -1,17 +1,32 @@
 # NidaPlayer
 
-NidaPlayer is an Android-first local music player prototype.
+NidaPlayer is a phone-first, local Android music player. Its interface takes inspiration from modern music-discovery apps, while playback is limited to audio already available on the device.
 
-## Features in this initial build
-- Scans local music using Android MediaStore
-- Plays music with AndroidX Media3 / ExoPlayer
-- Reads embedded album-cover artwork for the in-app player
-- Uses MediaSession for system media controls and media notification integration
-- Safety-first output rule: playback is muted when a private listening output (headphones/headset) is not detected
-- GitHub Actions builds a debug APK on pushes to `main`
+## Current prototype
 
-## Build
-The GitHub Actions workflow builds `app/build/outputs/apk/debug/app-debug.apk`. Open the Actions tab and download the `NidaPlayer-debug` artifact from a successful run.
+- Dark home screen with large artwork cards and quick playback actions
+- Explore screen for searching local songs, artists, and albums
+- Library tabs for songs, albums, and artists
+- Collection detail pages with play and shuffle actions
+- Persistent mini-player and dedicated now-playing screen
+- Media3 / ExoPlayer playback with previous, play/pause, next, seek, and queue display
+- Embedded album artwork in the player, with generated fallback artwork
+- Recent-play history stored locally on the device
+- MediaSession metadata includes artwork for compatible notification and lock-screen controls
+- Safety-first output behavior: audio is muted when a private listening output (headphones/headset) is not detected
+- GitHub Actions builds a debug APK for testing
 
-## Important
-This is an early prototype. Output-device detection differs between Android devices; test the mute behavior carefully before relying on it. The current version does not yet provide a settings override for the safety mute.
+## Build and install
+
+1. Open the repository's **Actions** tab.
+2. Open the latest successful **Android APK** run.
+3. Download the `NidaPlayer-debug` artifact and install the APK on an Android device.
+
+CI uses JDK 17 and Gradle 8.9 to match the Android Gradle Plugin 8.7.3 build configuration.
+
+## Important limitations
+
+- This is an early, local-library prototype. It does not stream music from YouTube Music or any online service.
+- Device output routing varies by Android version and manufacturer. The automatic safety mute should be tested on each device before relying on it.
+- Embedded artwork may not exist in every file; NidaPlayer generates a local placeholder when no cover is available.
+- The UI is custom-built from Android views and is still subject to device testing and iterative fixes.
