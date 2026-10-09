@@ -51,6 +51,7 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import java.io.ByteArrayOutputStream
 import java.util.Locale
+import java.util.concurrent.Executors
 
 /**
  * NidaPlayer's phone-first music UI.
@@ -86,6 +87,10 @@ class MainActivity : ComponentActivity() {
 
     private val recentUris = mutableListOf<String>()
     private val artworkCache = mutableMapOf<String, Bitmap>()
+    private val artworkBytesCache = mutableMapOf<String, ByteArray>()
+    private val pendingArtworkUris = mutableSetOf<String>()
+    private val artworkExecutor = Executors.newSingleThreadExecutor()
+    private var artworkPreloadBudget = 0
     private var activeArtwork: Bitmap? = null
     private val artworkViews = mutableListOf<ImageView>()
 
@@ -277,6 +282,7 @@ class MainActivity : ComponentActivity() {
     private fun renderShell() {
         root.removeAllViews()
         artworkViews.clear()
+        artworkPreloadBudget = 24
         miniPlayButton = null
         fullPlayButton = null
         fullSeekBar = null
@@ -1023,59 +1029,90 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadEmbeddedCover(track: AudioTrack) {
-        artworkCache[track.uri]?.let {
-            activeArtwork = it
-            updateArtworkViews()
+        ensureArtwork(track)
+    }
+
+    /**
+     * Loads cover art once per URI on a single background worker. The first few visible
+     * rows/cards are preloaded so playlist artwork is useful before a track is played.
+     */
+    private fun ensureArtwork(track: AudioTrack) {
+        val cachedBitmap = artworkCache[track.uri]
+        if (cachedBitmap != null) {
+            if (activeTrack?.uri == track.uri) {
+                activeArtwork = cachedBitmap
+                updateArtworkViews()
+                publishArtworkMetadata(
+                    track,
+                    artworkBytesCache[track.uri] ?: encodeArtwork(cachedBitmap)
+                )
+            }
+            return
         }
-        Thread {
-            var bytes: ByteArray? = null
-            try {
+
+        if (!pendingArtworkUris.add(track.uri)) return
+        try {
+            artworkExecutor.execute {
+                var embeddedBytes: ByteArray? = null
+                var decodedBitmap: Bitmap? = null
                 val retriever = MediaMetadataRetriever()
                 try {
                     retriever.setDataSource(this, Uri.parse(track.uri))
-                    bytes = retriever.embeddedPicture
-                } finally {
-                    retriever.release()
-                }
-            } catch (_: Exception) {
-                bytes = null
-            }
-
-            var bitmap: Bitmap? = null
-            if (bytes != null) {
-                bitmap = try {
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes!!.size)
+                    embeddedBytes = retriever.embeddedPicture
+                    val raw = embeddedBytes
+                    if (raw != null) {
+                        decodedBitmap = try {
+                            BitmapFactory.decodeByteArray(raw, 0, raw.size)
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
                 } catch (_: Exception) {
-                    null
+                    // Some audio providers do not expose embedded artwork.
+                } finally {
+                    try { retriever.release() } catch (_: Exception) {}
                 }
-            }
-            runOnUiThread {
-                val player = controller
-                if (isFinishing || activeTrack?.uri != track.uri) return@runOnUiThread
-                val image = bitmap ?: placeholderCover(track.title)
-                artworkCache[track.uri] = image
-                activeArtwork = image
-                updateArtworkViews()
 
-                // Send embedded art to MediaSession too, so compatible system media controls
-                // can use it for the notification and lock-screen artwork.
-                val currentIndex = player?.currentMediaItemIndex ?: -1
-                val currentItem = player?.currentMediaItem
-                if (player != null && currentIndex >= 0 && currentItem != null && currentItem.mediaId == track.uri) {
-                    val artworkBytes = bytes ?: encodeArtwork(image)
-                    val metadata = MediaMetadata.Builder()
-                        .setTitle(track.title)
-                        .setArtist(track.artist)
-                        .setAlbumTitle(track.album)
-                        .setArtworkData(artworkBytes, 3)
-                        .build()
-                    player.replaceMediaItem(
-                        currentIndex,
-                        currentItem.buildUpon().setMediaMetadata(metadata).build()
-                    )
+                val loadedBytes = if (decodedBitmap != null) embeddedBytes else null
+                val loadedBitmap = decodedBitmap
+                runOnUiThread {
+                    pendingArtworkUris.remove(track.uri)
+                    if (isFinishing) return@runOnUiThread
+                    val image = loadedBitmap ?: placeholderCover(track.title)
+                    artworkCache[track.uri] = image
+                    if (loadedBytes != null) artworkBytesCache[track.uri] = loadedBytes
+
+                    if (activeTrack?.uri == track.uri) {
+                        activeArtwork = image
+                        publishArtworkMetadata(track, loadedBytes ?: encodeArtwork(image))
+                    }
+                    updateArtworkViews()
                 }
             }
-        }.start()
+        } catch (_: Exception) {
+            pendingArtworkUris.remove(track.uri)
+        }
+    }
+
+    private fun publishArtworkMetadata(track: AudioTrack, artworkBytes: ByteArray) {
+        val player = controller ?: return
+        val index = player.currentMediaItemIndex
+        val item = player.currentMediaItem ?: return
+        if (index < 0 || item.mediaId != track.uri) return
+
+        val oldBytes = item.mediaMetadata.artworkData
+        if (oldBytes != null && oldBytes.contentEquals(artworkBytes)) return
+
+        val metadata = MediaMetadata.Builder()
+            .setTitle(track.title)
+            .setArtist(track.artist)
+            .setAlbumTitle(track.album)
+            .setArtworkData(artworkBytes, 3)
+            .build()
+        player.replaceMediaItem(
+            index,
+            item.buildUpon().setMediaMetadata(metadata).build()
+        )
     }
 
     private fun updateArtworkViews() {
@@ -1098,6 +1135,11 @@ class MainActivity : ComponentActivity() {
             contentDescription = "アルバムアート"
         }
         artworkViews += view
+        val track = tracks.firstOrNull { it.uri == key }
+        if (track != null && artworkPreloadBudget > 0 && artworkCache[key] == null) {
+            artworkPreloadBudget--
+            ensureArtwork(track)
+        }
         return view
     }
 
@@ -1282,6 +1324,7 @@ class MainActivity : ComponentActivity() {
         handler.removeCallbacksAndMessages(null)
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controller = null
+        artworkExecutor.shutdownNow()
         super.onDestroy()
     }
 }
