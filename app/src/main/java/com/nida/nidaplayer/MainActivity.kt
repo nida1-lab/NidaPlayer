@@ -904,7 +904,7 @@ class MainActivity : ComponentActivity() {
         }
         safety.addView(makeText("●", 11f, accentColor, true))
         safety.addView(makeText(
-            "  イヤホン未検知時は安全のため消音します",
+            "  イヤホン未接続時は本体スピーカーから再生します",
             12f, secondaryText
         ))
         body.addView(safety, fullWidthWrap())
