@@ -1060,7 +1060,7 @@ class MainActivity : ComponentActivity() {
                 // can use it for the notification and lock-screen artwork.
                 val currentIndex = player?.currentMediaItemIndex ?: -1
                 val currentItem = player?.currentMediaItem
-                if (currentIndex >= 0 && currentItem != null && currentItem.mediaId == track.uri) {
+                if (player != null && currentIndex >= 0 && currentItem != null && currentItem.mediaId == track.uri) {
                     val artworkBytes = bytes ?: encodeArtwork(image)
                     val metadata = MediaMetadata.Builder()
                         .setTitle(track.title)
