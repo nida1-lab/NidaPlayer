@@ -18,13 +18,14 @@ import kotlin.math.sqrt
 @UnstableApi
 internal class AutoVolumeNormalizer : BaseAudioProcessor() {
     companion object {
-        private const val TARGET_RMS = 0.16
-        private const val MIN_GAIN = 0.32
-        private const val MAX_GAIN = 3.0
-        private const val PEAK_LIMIT = 0.97
-        private const val RMS_TIME_SECONDS = 0.65
-        private const val GAIN_DOWN_SECONDS = 0.16
-        private const val GAIN_UP_SECONDS = 0.85
+        // A gentle target preserves more of each recording's original dynamics.
+        private const val TARGET_RMS = 0.115
+        private const val MIN_GAIN = 0.50
+        private const val MAX_GAIN = 2.0
+        private const val PEAK_LIMIT = 0.985
+        private const val RMS_TIME_SECONDS = 2.0
+        private const val GAIN_DOWN_SECONDS = 0.45
+        private const val GAIN_UP_SECONDS = 2.5
     }
 
     private var smoothedPower = TARGET_RMS * TARGET_RMS
@@ -67,7 +68,7 @@ internal class AutoVolumeNormalizer : BaseAudioProcessor() {
         smoothedPower += (blockPower - smoothedPower) * rmsAlpha
 
         // Avoid runaway gain in near-silence while still lifting quiet recordings.
-        val measuredRms = max(sqrt(smoothedPower), 0.035)
+        val measuredRms = max(sqrt(smoothedPower), 0.045)
         val desiredGain = (TARGET_RMS / measuredRms).coerceIn(MIN_GAIN, MAX_GAIN)
         val gainTime = if (desiredGain < currentGain) GAIN_DOWN_SECONDS else GAIN_UP_SECONDS
         val gainAlpha = 1.0 - exp(-blockSeconds / gainTime)
