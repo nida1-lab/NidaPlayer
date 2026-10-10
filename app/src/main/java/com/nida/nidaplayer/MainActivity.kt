@@ -27,8 +27,10 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.text.InputType
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.ImageView
@@ -103,6 +105,8 @@ class MainActivity : ComponentActivity() {
     private var fullDurationLabel: TextView? = null
     private var searchInput: EditText? = null
     private var ignoreSeekChange = false
+    private var lastRenderedScreenKey: String? = null
+    private var shellRenderId = 0
 
     private val handler = Handler(Looper.getMainLooper())
     private val progressRunnable = object : Runnable {
@@ -389,6 +393,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun renderShell() {
+        val screenKey = if (fullPlayerVisible) "PLAYER" else page.name
+        val shouldAnimate = lastRenderedScreenKey != null && lastRenderedScreenKey != screenKey
+        lastRenderedScreenKey = screenKey
+        val renderId = ++shellRenderId
         root.removeAllViews()
         artworkViews.clear()
         artworkPreloadBudget = 8
@@ -401,6 +409,7 @@ class MainActivity : ComponentActivity() {
 
         if (fullPlayerVisible) {
             renderFullPlayer(root)
+            if (shouldAnimate) animateScreenEntrance(renderId)
             return
         }
 
@@ -433,6 +442,74 @@ class MainActivity : ComponentActivity() {
             renderMiniPlayer(root)
         }
         renderBottomNavigation(root)
+        if (shouldAnimate) animateScreenEntrance(renderId)
+    }
+
+    private fun animateScreenEntrance(renderId: Int) {
+        root.post {
+            if (renderId != shellRenderId) return@post
+            for (index in 0 until root.childCount) {
+                val child = root.getChildAt(index)
+                child.animate().cancel()
+                child.alpha = 0f
+                child.translationY = dp(10).toFloat()
+                child.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setStartDelay(index * 28L)
+                    .setDuration(230L)
+                    .setInterpolator(DecelerateInterpolator(1.4f))
+                    .start()
+            }
+        }
+    }
+
+    private fun addPressFeedback(view: View) {
+        view.setOnTouchListener { touched, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    touched.animate().cancel()
+                    touched.animate()
+                        .scaleX(0.965f)
+                        .scaleY(0.965f)
+                        .setDuration(80L)
+                        .setInterpolator(DecelerateInterpolator())
+                        .start()
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    touched.animate().cancel()
+                    touched.animate()
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .setDuration(150L)
+                        .setInterpolator(DecelerateInterpolator(1.5f))
+                        .start()
+                }
+            }
+            false
+        }
+    }
+
+    private fun animatePlayIcon(view: TextView?, label: String) {
+        if (view == null || view.text.toString() == label) return
+        view.animate().cancel()
+        view.animate()
+            .alpha(0.25f)
+            .scaleX(0.82f)
+            .scaleY(0.82f)
+            .setDuration(85L)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                view.text = label
+                view.animate()
+                    .alpha(1f)
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .setDuration(155L)
+                    .setInterpolator(DecelerateInterpolator(1.5f))
+                    .start()
+            }
+            .start()
     }
 
     private fun renderTopBar(parent: LinearLayout) {
@@ -737,7 +814,15 @@ class MainActivity : ComponentActivity() {
             setPadding(dp(12), dp(4), dp(12), dp(6))
         }
         outer.addView(container)
+        outer.alpha = 0f
+        outer.translationY = dp(8).toFloat()
         parent.addView(outer)
+        outer.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(220L)
+            .setInterpolator(DecelerateInterpolator(1.4f))
+            .start()
     }
 
     private fun renderBottomNavigation(parent: LinearLayout) {
@@ -819,11 +904,21 @@ class MainActivity : ComponentActivity() {
         val cover = artworkView(track.uri, dp(300), dp(300)).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             elevation = dp(8).toFloat()
+            alpha = 0f
+            scaleX = 0.94f
+            scaleY = 0.94f
         }
         body.addView(cover, LinearLayout.LayoutParams(dp(300), dp(300)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
             bottomMargin = dp(28)
         })
+        cover.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(300L)
+            .setInterpolator(DecelerateInterpolator(1.4f))
+            .start()
         body.addView(makeText(track.title, 24f, primaryText, true).apply {
             gravity = Gravity.CENTER
             maxLines = 2
@@ -885,6 +980,7 @@ class MainActivity : ComponentActivity() {
             gravity = Gravity.CENTER
             setTextColor(0xFF191519.toInt())
             background = rounded(primaryText, 50f)
+            addPressFeedback(this)
             setOnClickListener { togglePlayback() }
         }
         controls.addView(fullPlayButton, LinearLayout.LayoutParams(dp(72), dp(72)).apply {
@@ -1423,8 +1519,8 @@ class MainActivity : ComponentActivity() {
 
     private fun updatePlayButtons() {
         val label = if (controller?.isPlaying == true) "Ⅱ" else "▶"
-        miniPlayButton?.text = label
-        fullPlayButton?.text = label
+        animatePlayIcon(miniPlayButton, label)
+        animatePlayIcon(fullPlayButton, label)
     }
 
     private fun updateProgressUi() {
@@ -1452,6 +1548,7 @@ class MainActivity : ComponentActivity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             background = if (selected) rounded(0xFF352128.toInt(), 16f) else rounded(backgroundColor, 16f)
+            addPressFeedback(this)
             setOnClickListener { action() }
         }
         item.addView(makeText(symbol, 23f, if (selected) accentColor else secondaryText, true).apply {
@@ -1471,6 +1568,7 @@ class MainActivity : ComponentActivity() {
             gravity = Gravity.CENTER
             setTextColor(primaryText)
             background = rounded(backgroundColor, 50f)
+            addPressFeedback(this)
             setOnClickListener { action() }
             minWidth = dp(42)
             minHeight = dp(42)
@@ -1486,6 +1584,7 @@ class MainActivity : ComponentActivity() {
             setTextColor(if (primary) 0xFFFFFFFF.toInt() else primaryText)
             setPadding(dp(12), dp(8), dp(12), dp(8))
             background = if (primary) rounded(accentColor, 24f) else rounded(elevatedColor, 24f)
+            addPressFeedback(this)
             setOnClickListener { action() }
         }
     }
@@ -1499,6 +1598,7 @@ class MainActivity : ComponentActivity() {
             setTextColor(if (selected) primaryText else secondaryText)
             background = rounded(if (selected) 0xFF403038.toInt() else surfaceColor, 22f,
                 if (selected) accentColor else surfaceColor, if (selected) dp(1) else 0)
+            addPressFeedback(this)
             setOnClickListener { action() }
         }
     }
