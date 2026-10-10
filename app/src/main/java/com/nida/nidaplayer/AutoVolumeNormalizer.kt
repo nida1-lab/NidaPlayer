@@ -42,7 +42,7 @@ internal class AutoVolumeNormalizer : BaseAudioProcessor() {
         }
     }
 
-    override fun onQueueInput(inputBuffer: ByteBuffer) {
+    override fun queueInput(inputBuffer: ByteBuffer) {
         val byteCount = inputBuffer.remaining()
         val sampleCount = byteCount / 2
         if (sampleCount <= 0) return
