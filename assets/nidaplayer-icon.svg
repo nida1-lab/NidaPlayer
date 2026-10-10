@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">NidaPlayer app icon</title>
+  <desc id="desc">A minimalist neon-green play symbol combined with an audio waveform on a deep midnight background.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#17212B"/>
+      <stop offset="1" stop-color="#080D13"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8BFFB2"/>
+      <stop offset="0.55" stop-color="#35E58A"/>
+      <stop offset="1" stop-color="#00CFA8"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <path d="M64 256c0-106 86-192 192-192s192 86 192 192-86 192-192 192S64 362 64 256Z" fill="#FFFFFF" opacity=".025"/>
+  <g fill="none" stroke="url(#accent)" stroke-linecap="round" stroke-width="20">
+    <path d="M100 224v64"/>
+    <path d="M142 192v128"/>
+    <path d="M184 218v76"/>
+    <path d="M226 174v164"/>
+  </g>
+  <path d="M260 153c0-14 16-22 28-14l126 99c10 8 10 23 0 31l-126 99c-12 9-28 1-28-14V153Z" fill="url(#accent)"/>
+</svg>
