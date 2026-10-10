@@ -88,7 +88,7 @@ internal class AutoVolumeNormalizer : BaseAudioProcessor() {
     }
 
     // Keep the smoothed gain between tracks for a less abrupt volume transition.
-    override fun onFlush(streamMetadata: AudioProcessor.StreamMetadata) = Unit
+    override fun onFlush() = Unit
 
     override fun onReset() {
         smoothedPower = TARGET_RMS * TARGET_RMS
