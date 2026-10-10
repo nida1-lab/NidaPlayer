@@ -1,13 +1,34 @@
 package com.nida.nidaplayer
 
-import androidx.media3.common.AudioAttributes
+import android.content.Context
 import android.media.audiofx.Equalizer
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 
+@OptIn(UnstableApi::class)
+private class NormalizingRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
+    override fun buildAudioSink(
+        context: Context,
+        enableFloatOutput: Boolean,
+        enableAudioOutputPlaybackParams: Boolean
+    ): AudioSink? {
+        // Audio processors operate on decoded PCM, so keep the sink on the PCM16 path.
+        return DefaultAudioSink.Builder(context)
+            .setEnableFloatOutput(false)
+            .setAudioProcessors(arrayOf(AutoVolumeNormalizer()))
+            .build()
+    }
+}
+
+@OptIn(UnstableApi::class)
 class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private lateinit var player: ExoPlayer
@@ -75,7 +96,7 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         activeService = this
-        player = ExoPlayer.Builder(this).build().apply {
+        player = ExoPlayer.Builder(this, NormalizingRenderersFactory(this)).build().apply {
             setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
