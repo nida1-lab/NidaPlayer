@@ -973,6 +973,28 @@ class MainActivity : ComponentActivity() {
         controls.addView(iconButton("⤨", "ライブラリの先頭からシャッフル") {
             playAll(activeQueue.ifEmpty { tracks.toList() }, shuffle = true)
         })
+        val repeatMode = controller?.repeatMode ?: Player.REPEAT_MODE_OFF
+        val repeatLabel = when (repeatMode) {
+            Player.REPEAT_MODE_ONE -> "↻¹"
+            Player.REPEAT_MODE_ALL -> "↻"
+            else -> "↻̸"
+        }
+        controls.addView(iconButton(repeatLabel, when (repeatMode) {
+            Player.REPEAT_MODE_ONE -> "1曲リピート中。タップで全曲リピート"
+            Player.REPEAT_MODE_ALL -> "全曲リピート中。タップでリピートOFF"
+            else -> "リピートOFF。タップで全曲リピート"
+        }) {
+            val player = controller ?: return@iconButton
+            player.repeatMode = when (player.repeatMode) {
+                Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                else -> Player.REPEAT_MODE_OFF
+            }
+            renderShell()
+        }.apply {
+            if (repeatMode != Player.REPEAT_MODE_OFF) setTextColor(accentColor)
+            textSize = 20f
+        })
         controls.addView(iconButton("⏮", "前の曲") { playRelative(-1) })
         fullPlayButton = TextView(this).apply {
             text = if (controller?.isPlaying == true) "Ⅱ" else "▶"
