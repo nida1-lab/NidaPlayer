@@ -19,6 +19,7 @@ import androidx.media3.session.MediaSessionService
 import androidx.media3.session.CommandButton
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
+import androidx.media3.session.SessionError
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 
@@ -144,13 +145,13 @@ class PlaybackService : MediaSessionService() {
                 override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo,
                     customCommand: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
                     if (customCommand.customAction != TOGGLE_LYRICS) {
-                        return Futures.immediateFuture(SessionResult(SessionResult.ERROR_NOT_SUPPORTED))
+                        return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
                     }
                     val success = lyricsOverlay.toggle()
                     if (!success) Toast.makeText(this@PlaybackService,
                         "曲を再生し、アプリの歌詞ボタンで重ねて表示の許可を設定してください", Toast.LENGTH_LONG).show()
                     return Futures.immediateFuture(SessionResult(
-                        if (success) SessionResult.RESULT_SUCCESS else SessionResult.ERROR_PERMISSION_DENIED))
+                        if (success) SessionResult.RESULT_SUCCESS else SessionError.ERROR_PERMISSION_DENIED))
                 }
             }).build()
         updateLyricsButton()
