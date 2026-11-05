@@ -1,32 +1,42 @@
-# NidaPlayer
+# NidaPlayer 0.3
 
-NidaPlayer is a phone-first, local Android music player. Its interface takes inspiration from modern music-discovery apps, while playback is limited to audio already available on the device.
+Android向けのローカル音楽プレイヤー。サーバーなしで、音源のM4A取り込み・曲順を維持したプレイリスト・同期歌詞を利用できます。Android 8以降。
 
-## Current prototype
+## 使い方
 
-- Dark home screen with large artwork cards and quick playback actions
-- Explore screen for searching local songs, artists, and albums
-- Library tabs for songs, albums, and artists
-- Collection detail pages with play and shuffle actions
-- Persistent mini-player and dedicated now-playing screen
-- Media3 / ExoPlayer playback with previous, play/pause, next, seek, and queue display
-- Embedded album artwork in the player, with generated fallback artwork
-- Recent-play history stored locally on the device
-- MediaSession metadata includes artwork for compatible notification and lock-screen controls
-- Safety-first output behavior: audio is muted when a private listening output (headphones/headset) is not detected
-- GitHub Actions builds a debug APK for testing
+1. ホームの「M4A変換・再生リスト取り込み」または右上の＋を開く。
+2. YouTube再生リストのHTTPS URLとYouTube Data API v3のAPIキーを入力し、曲一覧を取得。公開・限定公開に対応。50曲を超えるリストもページを順に取得します。非公開リストは未対応。
+3. 各曲に端末内の音源ファイルを割り当て、曲名・アーティストを必要に応じて編集。「取り込む」で順番にAAC/M4Aへ変換。手元の音源だけを複数選択する方法もあります。
+4. 完了した曲は「ライブラリ → プレイリスト」に元の曲順で追加されます。未割り当て・失敗・スキップの曲は再生対象に含みません。途中で失敗しても次の曲へ進み、中止・プロセス終了後は完了済みの曲を保持して再開できます。
+5. 完了した行をタップすると、M4Aを「ファイル」など任意の保存先へ書き出せます。
 
-## Build and install
+YouTube Data APIは曲名・投稿者名・サムネイル等の情報取得にのみ使用します。動画音声の抽出は行いません。投稿者名はアーティストの初期値なので必要に応じて修正してください。自作・購入済みなど、保存と変換が許可されている音源を使用してください。
 
-1. Open the repository's **Actions** tab.
-2. Open the latest successful **Android APK** run.
-3. Download the `NidaPlayer-debug` artifact and install the APK on an Android device.
+APIキーは[Googleの公式手順](https://developers.google.com/youtube/v3/getting-started)で作成します。YouTube Data API v3を有効化してください。APIキーは取得時のみ使用し、ファイル・設定・ログには保存しません。Androidアプリ制限を使う場合のパッケージ名は `com.nida.nidaplayer`。アプリの署名証明書SHA-1に合わせて制限してください。通常の再生・音源変換・保存済み歌詞はオフラインで動作します。
 
-CI uses JDK 17 and Gradle 8.9 to match the Android Gradle Plugin 8.7.3 build configuration.
+## 歌詞
 
-## Important limitations
+曲を再生してプレイヤーを開き、「同期歌詞 → LRC追加」でUTF-8のLRCファイルを選択。歌詞は端末内にコピーされ、元のLRCを移動しても利用できます。複数タイムスタンプ、1～3桁の秒の小数、offsetタグ、曲ごとの±60秒の調整に対応。シーク・曲変更に合わせて表示を更新します。
 
-- This is an early, local-library prototype. It does not stream music from YouTube Music or any online service.
-- Device output routing varies by Android version and manufacturer. The automatic safety mute should be tested on each device before relying on it.
-- Embedded artwork may not exist in every file; NidaPlayer generates a local placeholder when no cover is available.
-- The UI is custom-built from Android views and is still subject to device testing and iterative fixes.
+「フローティング歌詞 ON / OFF」の初回利用時に「他のアプリの上に重ねて表示」を許可してください。歌詞上部をドラッグして移動でき、×で閉じられます。再生通知の「歌詞 ON / OFF」からも切り替え可能です。Androidが折りたたむ場合は通知を展開してください。権限を取り消すとフローティング表示を閉じます。アプリ内の歌詞表示にはこの権限は不要です。
+
+## 取り込み・保存
+
+- Media3 Transformerが端末のメディアコーデックでAAC音声をMP4コンテナに保存（拡張子M4A）。対応する元形式は端末のデコーダーに依存します。AAC音源は不要な再エンコードを避けて再格納する場合があります。
+- 曲名・アーティスト・プレイリスト名とJPEGジャケットをM4A内部に保存。ジャケットは元音源の埋め込み画像を優先し、なければAPIのサムネイルを使用。画像取得に失敗しても音源取り込みは継続します。
+- 変換中は通知に進捗と中止ボタンを表示。Android 15以降はmediaProcessing、以前はdataSyncのフォアグラウンドサービスを使用。OSの実行時間制限時は処理を止め、再開用の記録を残します。端末メーカーの省電力設定等による強制終了は防げません。
+- 音源と歌詞・取り込み履歴はアプリ領域に保存。アプリを削除すると失われるため、必要なM4Aは書き出して保管してください。
+- INTERNET権限は曲一覧と不足するジャケットの取得に使用。音源・歌詞・履歴はアップロードしません。LiteLLMや動画抽出用ライブラリは使用しません。
+
+## ビルドと検証
+
+GitHub Actionsの **Android APK** がJUnit、Android Lint、APKビルドを実行し、`NidaPlayer-debug` を保存します。さらにAndroid 15エミュレーターで実際のWAV→AAC変換、M4A内の日本語タグ・ジャケット、オフライン歌詞、曲順の永続化を検証します。
+
+開発環境: JDK 17、Gradle 8.9、AGP 8.7.3、Kotlin 2.0.21、compile/target SDK 35。
+
+```sh
+gradle testDebugUnitTest lintDebug assembleDebug
+gradle connectedDebugAndroidTest
+```
+
+デバッグ署名鍵はActionsキャッシュで継続利用します。従来のActions生成APKは別の署名鍵で作られている可能性があり、その場合Androidは上書き更新を拒否します。キャッシュ消去時も同様です。本番配布用の署名鍵はこのリポジトリには含まれていません。

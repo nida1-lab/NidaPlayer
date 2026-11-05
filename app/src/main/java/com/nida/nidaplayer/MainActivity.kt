@@ -3,6 +3,7 @@ package com.nida.nidaplayer
 import android.Manifest
 import android.content.ComponentName
 import android.content.Intent
+import android.app.AlertDialog
 import android.content.ContentUris
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
@@ -23,6 +24,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.text.InputType
@@ -52,6 +54,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import androidx.media3.session.SessionCommand
 import com.google.common.util.concurrent.ListenableFuture
 import java.io.ByteArrayOutputStream
 import java.util.Locale
@@ -64,7 +67,7 @@ import java.util.concurrent.Executors
  */
 class MainActivity : ComponentActivity() {
     private enum class Page { HOME, EXPLORE, LIBRARY, COLLECTION }
-    private enum class LibraryTab { SONGS, ALBUMS, ARTISTS }
+    private enum class LibraryTab { SONGS, ALBUMS, ARTISTS, PLAYLISTS }
 
     private val backgroundColor = 0xFF101012.toInt()
     private val surfaceColor = 0xFF1D1D21.toInt()
@@ -107,6 +110,29 @@ class MainActivity : ComponentActivity() {
     private var ignoreSeekChange = false
     private var lastRenderedScreenKey: String? = null
     private var shellRenderId = 0
+    private var lyricsPanel: LyricsPanel? = null
+    private var lyricDocument = LrcDocument(emptyList())
+    private var lyricTrackUri = ""
+    private var pendingLrcTrack = ""
+    private var enableOverlayAfterPermission = false
+
+    private val lrcPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null || pendingLrcTrack.isBlank()) return@registerForActivityResult
+        val target = pendingLrcTrack
+        artworkExecutor.execute {
+            val result = runCatching { LyricsStore(this).importFile(target, uri) }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                result.fold(onSuccess = {
+                    if (activeTrack?.uri == target) { lyricTrackUri = target; lyricDocument = it }
+                    renderShell()
+                    Toast.makeText(this, "LRC歌詞をオフライン保存しました", Toast.LENGTH_SHORT).show()
+                }, onFailure = {
+                    Toast.makeText(this, it.message ?: "歌詞を読み込めませんでした", Toast.LENGTH_LONG).show()
+                })
+            }
+        }
+    }
 
     private val handler = Handler(Looper.getMainLooper())
     private val progressRunnable = object : Runnable {
@@ -137,6 +163,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingLrcTrack = savedInstanceState?.getString("lrc_track").orEmpty()
         window.statusBarColor = backgroundColor
         window.navigationBarColor = backgroundColor
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -188,7 +215,8 @@ class MainActivity : ComponentActivity() {
                 controller?.addListener(object : Player.Listener {
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         val player = controller ?: return
-                        val item = activeQueue.getOrNull(player.currentMediaItemIndex)
+                        val item = activeQueue.find { it.uri == mediaItem?.mediaId }
+                            ?: tracks.find { it.uri == mediaItem?.mediaId }
                         if (item != null) {
                             activeTrack = item
                             activeArtwork = artworkCache[item.uri]
@@ -213,8 +241,15 @@ class MainActivity : ComponentActivity() {
                     }
                 })
                 val player = controller
-                if (player != null && player.currentMediaItemIndex in activeQueue.indices) {
-                    activeTrack = activeQueue[player.currentMediaItemIndex]
+                if (player != null && player.mediaItemCount > 0) {
+                    activeQueue = (0 until player.mediaItemCount).map { index ->
+                        val item = player.getMediaItemAt(index)
+                        tracks.find { it.uri == item.mediaId } ?: AudioTrack(
+                            item.mediaId.hashCode().toLong(), item.mediaMetadata.title?.toString().orEmpty(),
+                            item.mediaMetadata.artist?.toString().orEmpty(), item.mediaMetadata.albumTitle?.toString().orEmpty(),
+                            item.localConfiguration?.uri?.toString() ?: item.mediaId)
+                    }
+                    activeTrack = activeQueue.getOrNull(player.currentMediaItemIndex)
                     renderShell()
                     activeTrack?.let { loadEmbeddedCover(it) }
                 }
@@ -240,7 +275,7 @@ class MainActivity : ComponentActivity() {
 
     private fun openMp3Picker() {
         try {
-            mp3Picker.launch(arrayOf("audio/mpeg"))
+            mp3Picker.launch(arrayOf("audio/*"))
         } catch (_: Exception) {
             Toast.makeText(this, "ファイル選択画面を開けませんでした", Toast.LENGTH_LONG).show()
         }
@@ -276,7 +311,7 @@ class MainActivity : ComponentActivity() {
                         id = uriText.hashCode().toLong(),
                         title = displayName.substringBeforeLast('.', displayName).ifBlank { "タイトル不明" },
                         artist = "ファイルから追加",
-                        album = "追加したMP3",
+                        album = "追加した音源",
                         uri = uriText
                     )
                 )
@@ -289,10 +324,10 @@ class MainActivity : ComponentActivity() {
         prefs.edit().putString("imported_mp3_uris", saved.joinToString("\n")).apply()
         if (activeQueue.isEmpty()) activeQueue = tracks.toList()
         infoMessage = when {
-            added > 0 && failed == 0 -> "MP3を${added}曲追加しました"
-            added > 0 -> "MP3を${added}曲追加、${failed}件は読み込めませんでした"
+            added > 0 && failed == 0 -> "音源を${added}曲追加しました"
+            added > 0 -> "音源を${added}曲追加、${failed}件は読み込めませんでした"
             failed > 0 -> "一部のファイルを追加できませんでした（${failed}件）"
-            else -> "選択したMP3はすでに追加されています"
+            else -> "選択した音源はすでに追加されています"
         }
         Toast.makeText(this, infoMessage, Toast.LENGTH_LONG).show()
         renderShell()
@@ -319,7 +354,7 @@ class MainActivity : ComponentActivity() {
                             id = uriText.hashCode().toLong(),
                             title = displayName.substringBeforeLast('.', displayName).ifBlank { "タイトル不明" },
                             artist = "ファイルから追加",
-                            album = "追加したMP3",
+                            album = "追加した音源",
                             uri = uriText
                         )
                     )
@@ -368,7 +403,7 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
-            val imported = tracks.filter { it.uri.startsWith("content://") &&
+            val imported = tracks.filter { (it.uri.startsWith("content://") || it.uri.startsWith("file://")) &&
                 !it.uri.contains("media/external/audio/media") }
             tracks.clear()
             tracks.addAll(loaded)
@@ -406,6 +441,7 @@ class MainActivity : ComponentActivity() {
         fullPositionLabel = null
         fullDurationLabel = null
         searchInput = null
+        lyricsPanel = null
 
         if (fullPlayerVisible) {
             renderFullPlayer(root)
@@ -540,8 +576,8 @@ class MainActivity : ComponentActivity() {
             renderShell()
             searchInput?.requestFocus()
         })
-        bar.addView(iconButton("＋", "MP3ファイルをまとめて追加") {
-            openMp3Picker()
+        bar.addView(iconButton("＋", "M4A変換・再生リスト取り込み") {
+            startActivity(Intent(this, ImportActivity::class.java))
         })
         bar.addView(iconButton("⟳", "端末ライブラリを再読み込み") {
             requestLibraryPermission()
@@ -574,13 +610,17 @@ class MainActivity : ComponentActivity() {
         actions.addView(actionButton("▶  シャッフル再生", true) {
             playAll(tracks.toList(), shuffle = true)
         }, LinearLayout.LayoutParams(0, dp(48), 1f))
-        actions.addView(actionButton("＋ MP3追加", false) {
+        actions.addView(actionButton("＋ 音源追加", false) {
             openMp3Picker()
         }, LinearLayout.LayoutParams(dp(112), dp(48)).apply {
             leftMargin = dp(8)
         })
         hero.addView(actions)
         parent.addView(hero, fullWidthWrap())
+        addGap(parent, 12)
+        parent.addView(actionButton("M4A変換・再生リスト取り込み  ›", false) {
+            startActivity(Intent(this, ImportActivity::class.java))
+        }, fullWidthWrap())
         addGap(parent, 26)
 
         val recent = recentTracks()
@@ -708,6 +748,10 @@ class MainActivity : ComponentActivity() {
             libraryTab = LibraryTab.ARTISTS
             renderShell()
         }, LinearLayout.LayoutParams(0, dp(42), 1f).apply { leftMargin = dp(6) })
+        tabs.addView(tabButton("プレイリスト", libraryTab == LibraryTab.PLAYLISTS) {
+            libraryTab = LibraryTab.PLAYLISTS
+            renderShell()
+        }, LinearLayout.LayoutParams(0, dp(42), 1f).apply { leftMargin = dp(6) })
         parent.addView(tabs)
         addGap(parent, 20)
 
@@ -737,6 +781,16 @@ class MainActivity : ComponentActivity() {
                     .entries.sortedBy { it.key.lowercase(Locale.getDefault()) }
                 if (groups.isEmpty()) emptyState(parent, "アーティストがありません", "音楽ファイルを追加するとここに表示されます。")
                 else groups.forEach { (name, items) -> renderCollectionRow(parent, name, items, "アーティスト") }
+            }
+            LibraryTab.PLAYLISTS -> {
+                val batches = ImportStore(this).all().filter { it.tracks().isNotEmpty() }
+                parent.addView(actionButton("＋ プレイリストを取り込む", false) {
+                    startActivity(Intent(this, ImportActivity::class.java))
+                }, fullWidthWrap())
+                addGap(parent, 14)
+                if (batches.isEmpty()) emptyState(parent, "プレイリストがありません",
+                    "取り込んだ曲が元の曲順でここに並びます。")
+                else batches.forEach { batch -> renderCollectionRow(parent, batch.name, batch.tracks(), "プレイリスト") }
             }
         }
     }
@@ -1026,6 +1080,8 @@ class MainActivity : ComponentActivity() {
             12f, secondaryText
         ))
         body.addView(safety, fullWidthWrap())
+        addGap(body, 22)
+        renderLyrics(body, track)
         addGap(body, 22)
         renderEqualizer(body)
         addGap(body, 22)
@@ -1547,6 +1603,8 @@ class MainActivity : ComponentActivity() {
 
     private fun updateProgressUi() {
         val player = controller ?: return
+        lyricsPanel?.display(lyricDocument, player.currentPosition,
+            LyricsStore(this).delay(lyricTrackUri))
         val duration = player.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 0L
         val position = player.currentPosition.coerceAtLeast(0L)
         fullPositionLabel?.text = formatTime(position)
@@ -1669,5 +1727,86 @@ class MainActivity : ComponentActivity() {
         controller = null
         artworkExecutor.shutdownNow()
         super.onDestroy()
+    }
+
+    private fun refreshConvertedTracks() {
+        val converted = ImportStore(this).all().flatMap { it.tracks() }
+        tracks.removeAll { it.uri.startsWith("file://") }
+        converted.forEach { track -> if (tracks.none { it.uri == track.uri }) tracks.add(track) }
+    }
+
+    private fun renderLyrics(parent: LinearLayout, track: AudioTrack) {
+        if (lyricTrackUri != track.uri) {
+            lyricTrackUri = track.uri
+            lyricDocument = LyricsStore(this).load(track.uri)
+        }
+        sectionHeader(parent, "同期歌詞", "LRC追加") {
+            pendingLrcTrack = track.uri
+            lrcPicker.launch(arrayOf("*/*"))
+        }
+        lyricsPanel = LyricsPanel(this).apply { background = rounded(surfaceColor, 20f) }
+        parent.addView(lyricsPanel, fullWidthWrap())
+        addGap(parent, 8)
+        parent.addView(actionButton("フローティング歌詞 ON / OFF", false) { toggleFloatingLyrics() }, fullWidthWrap())
+        addGap(parent, 8)
+        parent.addView(actionButton("歌詞のタイミング・透明度", false) { showLyricsSettings(track) }, fullWidthWrap())
+    }
+
+    private fun toggleFloatingLyrics() {
+        if (controller?.currentMediaItem == null) {
+            Toast.makeText(this, "先に曲を選択してください", Toast.LENGTH_SHORT).show(); return
+        }
+        if (!Settings.canDrawOverlays(this)) {
+            enableOverlayAfterPermission = true
+            runCatching { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
+                .onFailure { enableOverlayAfterPermission = false }
+            return
+        }
+        controller?.sendCustomCommand(SessionCommand(PlaybackService.TOGGLE_LYRICS, Bundle.EMPTY), Bundle.EMPTY)
+    }
+
+    private fun showLyricsSettings(track: AudioTrack) {
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(12), dp(24), dp(12)) }
+        val store = LyricsStore(this)
+        val label = makeText("", 14f, primaryText)
+        val update = { label.text = "歌詞の遅延 ${store.delay(track.uri)} ms（＋で遅く表示）" }
+        update(); layout.addView(label)
+        val buttons = LinearLayout(this)
+        listOf("−100 ms" to -100L, "リセット" to 0L, "+100 ms" to 100L).forEach { (title, value) ->
+            buttons.addView(actionButton(title, false) {
+                store.setDelay(track.uri, if (value == 0L) 0L else store.delay(track.uri) + value)
+                update(); updateProgressUi()
+            }, LinearLayout.LayoutParams(0, dp(48), 1f))
+        }
+        layout.addView(buttons)
+        layout.addView(makeText("フローティング表示の不透明度（次回表示時に反映）", 12f, secondaryText))
+        val prefs = getSharedPreferences("lyrics", MODE_PRIVATE)
+        layout.addView(SeekBar(this).apply {
+            min = 30; max = 100; progress = prefs.getInt("opacity", 88)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    if (fromUser) prefs.edit().putInt("opacity", progress).apply()
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar) {}
+            })
+        })
+        AlertDialog.Builder(this).setTitle("歌詞の設定").setView(layout).setPositiveButton("閉じる", null).show()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!::root.isInitialized) return
+        refreshConvertedTracks()
+        renderShell()
+        if (enableOverlayAfterPermission) {
+            enableOverlayAfterPermission = false
+            if (Settings.canDrawOverlays(this)) toggleFloatingLyrics()
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("lrc_track", pendingLrcTrack)
+        super.onSaveInstanceState(outState)
     }
 }

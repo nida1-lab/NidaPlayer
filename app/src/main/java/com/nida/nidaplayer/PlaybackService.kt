@@ -1,7 +1,11 @@
 package com.nida.nidaplayer
 
 import android.content.Context
+import android.app.PendingIntent
+import android.content.Intent
 import android.media.audiofx.Equalizer
+import android.os.Bundle
+import android.widget.Toast
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -12,6 +16,11 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.CommandButton
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 
 @OptIn(UnstableApi::class)
 private class NormalizingRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
@@ -33,8 +42,10 @@ class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private lateinit var player: ExoPlayer
     private var equalizer: Equalizer? = null
+    private lateinit var lyricsOverlay: LyricsOverlay
 
     companion object {
+        const val TOGGLE_LYRICS = "com.nida.nidaplayer.TOGGLE_LYRICS"
         @Volatile private var activeService: PlaybackService? = null
 
         fun equalizerBandCount(): Int = activeService?.safeEqualizer()?.numberOfBands?.toInt() ?: 0
@@ -116,7 +127,41 @@ class PlaybackService : MediaSessionService() {
                 ensureEqualizer()
             }
         })
-        mediaSession = MediaSession.Builder(this, player).build()
+        lyricsOverlay = LyricsOverlay(this, player) { updateLyricsButton() }
+        mediaSession = MediaSession.Builder(this, player)
+            .setSessionActivity(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+            .setCallback(object : MediaSession.Callback {
+                override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
+                    val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
+                    if (controller.packageName == packageName || session.isMediaNotificationController(controller)) {
+                        commands.add(SessionCommand(TOGGLE_LYRICS, Bundle.EMPTY))
+                    }
+                    return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                        .setAvailableSessionCommands(commands.build()).build()
+                }
+
+                override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo,
+                    customCommand: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
+                    if (customCommand.customAction != TOGGLE_LYRICS) {
+                        return Futures.immediateFuture(SessionResult(SessionResult.ERROR_NOT_SUPPORTED))
+                    }
+                    val success = lyricsOverlay.toggle()
+                    if (!success) Toast.makeText(this@PlaybackService,
+                        "曲を再生し、アプリの歌詞ボタンで重ねて表示の許可を設定してください", Toast.LENGTH_LONG).show()
+                    return Futures.immediateFuture(SessionResult(
+                        if (success) SessionResult.RESULT_SUCCESS else SessionResult.ERROR_PERMISSION_DENIED))
+                }
+            }).build()
+        updateLyricsButton()
+    }
+
+    private fun updateLyricsButton() {
+        if (!::lyricsOverlay.isInitialized) return
+        mediaSession?.setCustomLayout(listOf(CommandButton.Builder()
+            .setDisplayName(if (lyricsOverlay.visible) "歌詞 OFF" else "歌詞 ON")
+            .setIconResId(android.R.drawable.ic_menu_edit)
+            .setSessionCommand(SessionCommand(TOGGLE_LYRICS, Bundle.EMPTY)).build()))
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
@@ -128,6 +173,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        if (::lyricsOverlay.isInitialized) lyricsOverlay.hide()
         try { equalizer?.release() } catch (_: Exception) {}
         equalizer = null
         activeService = null
