@@ -32,11 +32,20 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import kotlin.math.sin
 
-@OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 @RunWith(AndroidJUnit4::class)
 class AudioPipelineTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context: Context get() = instrumentation.targetContext
+
+    private fun capture(name: String) {
+        instrumentation.waitForIdleSync()
+        val bitmap = instrumentation.uiAutomation.takeScreenshot() ?: return
+        val file = File(context.getExternalFilesDir(null), "screenshots/$name.png")
+        file.parentFile!!.mkdirs()
+        file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+    }
 
     private fun wavBytes(): ByteArray {
         val sampleCount = 44100
@@ -129,17 +138,22 @@ class AudioPipelineTest {
             } while (saved.entries.any { it.state !in setOf("done", "failed") } && System.currentTimeMillis() < deadline)
             assertEquals(listOf("failed", "done"), saved.entries.map { it.state })
             assertEquals(listOf("valid"), saved.tracks().map { it.title })
+            capture("imports")
             instrumentation.uiAutomation.executeShellCommand("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
                 .use { android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes() }
             assertTrue(Settings.canDrawOverlays(context))
+            var overlay: LyricsOverlay? = null
+            var player: androidx.media3.exoplayer.ExoPlayer? = null
             instrumentation.runOnMainSync {
-                val player = androidx.media3.exoplayer.ExoPlayer.Builder(context).build()
-                player.setMediaItem(MediaItem.Builder().setMediaId(saved.entries[1].output)
+                player = androidx.media3.exoplayer.ExoPlayer.Builder(context).build()
+                player!!.setMediaItem(MediaItem.Builder().setMediaId(saved.entries[1].output)
                     .setUri(saved.entries[1].output).build())
-                val overlay = LyricsOverlay(context, player) {}
-                try { assertTrue(overlay.toggle()); assertTrue(overlay.visible); overlay.hide(); assertFalse(overlay.visible) }
-                finally { overlay.hide(); player.release() }
+                LyricsStore(context).save(saved.entries[1].output, "[00:00.00]フローティング歌詞\n[00:00.50]次の歌詞")
+                overlay = LyricsOverlay(context, player!!) {}
+                assertTrue(overlay!!.toggle()); assertTrue(overlay!!.visible)
             }
+            try { capture("floating-lyrics") }
+            finally { instrumentation.runOnMainSync { overlay?.hide(); assertFalse(overlay!!.visible); player?.release() } }
             saved.entries.filter { it.output.isNotEmpty() }.forEach { File(Uri.parse(it.output).path!!).delete() }
         } finally {
             instrumentation.runOnMainSync { activity.finish(); context.stopService(Intent(context, AudioImportService::class.java)) }

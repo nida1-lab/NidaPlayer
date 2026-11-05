@@ -86,9 +86,14 @@ jobs:
           target: google_apis
           disable-animations: true
           script: gradle connectedDebugAndroidTest
+      - name: Collect UI captures
+        if: always()
+        run: adb pull /sdcard/Android/data/com.nida.nidaplayer/files/screenshots ui-captures || true
       - name: Upload device test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: NidaPlayer-device-test-reports
-          path: app/build/reports/androidTests/
+          path: |
+            app/build/reports/androidTests/
+            ui-captures/

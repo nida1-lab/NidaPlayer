@@ -23,7 +23,7 @@ import androidx.media3.session.SessionError
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 
-@OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 private class NormalizingRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
     override fun buildAudioSink(
         context: Context,
@@ -38,7 +38,7 @@ private class NormalizingRenderersFactory(context: Context) : DefaultRenderersFa
     }
 }
 
-@OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private lateinit var player: ExoPlayer

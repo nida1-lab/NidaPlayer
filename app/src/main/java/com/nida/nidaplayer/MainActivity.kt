@@ -1502,7 +1502,7 @@ class MainActivity : ComponentActivity() {
             .setTitle(track.title)
             .setArtist(track.artist)
             .setAlbumTitle(track.album)
-            .setArtworkData(artworkBytes, 3)
+            .setArtworkData(artworkBytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
             .build()
         player.replaceMediaItem(
             index,

@@ -32,7 +32,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
 
-@OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 class AudioImportService : Service() {
     private lateinit var store: ImportStore
     private val handler = Handler(Looper.getMainLooper())
@@ -110,8 +110,7 @@ class AudioImportService : Service() {
         current = entry
         store.update(batchId) { it.entries.find { row -> row.id == entry.id }?.apply { state = "processing"; error = "" } }
         val directory = File(filesDir, "audio_imports").apply { mkdirs() }
-        val output = File(directory, "${entry.id}.part.m4a")
-        output.delete()
+        val output = File(directory, "${entry.id}.${java.util.UUID.randomUUID()}.part.m4a")
         temp = output
         val token = ++generation
         try {
@@ -231,8 +230,10 @@ class AudioImportService : Service() {
 
     private fun cancel(message: String) {
         generation++
+        val wasTransforming = transformer != null
         runCatching { transformer?.cancel() }
         transformer = null
+        if (wasTransforming) temp?.delete()
         current?.let { entry -> store.update(batchId) { batch -> batch.entries.find { it.id == entry.id }?.apply {
             if (state == "processing") { state = "waiting"; error = message }
         } } }
